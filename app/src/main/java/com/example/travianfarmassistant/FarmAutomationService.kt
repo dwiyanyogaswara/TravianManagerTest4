@@ -115,72 +115,6 @@ class FarmAutomationService : Service() {
     private var scheduledRefreshForNextRun = false
     private var countdownCyclePending = false
     private var initialCyclePending = false
-    /**
-     * Refresh Village dijalankan 30 detik setelah countdown dimulai.
-     * Refresh adalah pekerjaan persiapan untuk cycle berikutnya dan maksimal 3 menit.
-     */
-    private val delayedVillageRefreshRunnable: Runnable = object : Runnable {
-        override fun run() {
-            if (!running) return
-            if (villageRefreshInProgress || villageRefreshCompleted) return
-            if (pendingStartAll || builderInProgress || loginInProgress || reloginRequested) {
-                logEvent("AUTO REFRESH VILLAGE: WebView sedang dipakai; refresh ditunda 10 detik")
-                handler.postDelayed(this, 10_000L)
-                return
-            }
-            startAutomaticVillageRefresh()
-        }
-    }
-
-    private fun scheduleVillageRefreshForNextRun(countdownStartedAt: Long) {
-        handler.removeCallbacks(delayedVillageRefreshRunnable)
-        if (!running) return
-        val refreshAt = countdownStartedAt + 30_000L
-        val delay = (refreshAt - System.currentTimeMillis()).coerceAtLeast(0L)
-        scheduledRefreshForNextRun = true
-        countdownCyclePending = true
-        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
-            .putLong("countdown_started_at", countdownStartedAt)
-            .apply()
-        logEvent("AUTO REFRESH VILLAGE: dijadwalkan 30 detik SETELAH Countdown dimulai — ${timeFormat.format(Date(refreshAt))}")
-        handler.postDelayed(delayedVillageRefreshRunnable, delay)
-    }
-
-    private fun closeAutomaticVillageRefresh(reason: String) {
-        if (!villageRefreshInProgress && villageRefreshClosed) return
-        handler.removeCallbacks(villageRefreshTimeoutRunnable)
-        villageRefreshTimeoutRunnable = null
-        villageRefreshInProgress = false
-        villageRefreshCompleted = true
-        villageRefreshClosed = true
-        villageRefreshInspectInFlight = false
-        try { automationWebView()?.stopLoading() } catch (_: Exception) {}
-        logEvent("AUTO REFRESH VILLAGE: ditutup — $reason")
-        updateNotification("Refresh Village selesai")
-
-        if (running && initialCyclePending) {
-            initialCyclePending = false
-            countdownCyclePending = false
-            handler.post { triggerScheduledCycle() }
-        } else if (running && nextAt > 0L && System.currentTimeMillis() >= nextAt) {
-            handler.post { triggerScheduledCycle() }
-        }
-    }
-    private val cycleWatchdogRunnable: Runnable = Runnable {
-        if (!running) return@Runnable
-        val now = System.currentTimeMillis()
-        persistActiveCycleDuration(now)
-        logEvent("WATCHDOG: fase siklus berjalan >5 menit — proses aktif diakhiri agar scheduler tidak stuck")
-        pendingStartAll = false
-        builderInProgress = false
-        loginInProgress = false
-        reloginRequested = false
-        pendingUpgradeUrl = ""
-        pendingUpgradeCosts = longArrayOf(0L, 0L, 0L, 0L)
-        try { automationWebView()?.stopLoading() } catch (_: Exception) {}
-        scheduleNextRandomRun()
-        updateNotification("Siklus dihentikan oleh watchdog 5 menit")
-    }
     private data class VillageDataRecord(
         val isChecklist: Boolean,
         val namaVillage: String,
@@ -289,6 +223,73 @@ class FarmAutomationService : Service() {
     private var villageRefreshInspectInFlight = false
     private var villageRefreshVillages = mutableListOf<Pair<String, String>>()
     private var farmListCycleComplete = false
+
+    private val cycleWatchdogRunnable: Runnable = Runnable {
+        if (!running) return@Runnable
+        val now = System.currentTimeMillis()
+        persistActiveCycleDuration(now)
+        logEvent("WATCHDOG: fase siklus berjalan >5 menit — proses aktif diakhiri agar scheduler tidak stuck")
+        pendingStartAll = false
+        builderInProgress = false
+        loginInProgress = false
+        reloginRequested = false
+        pendingUpgradeUrl = ""
+        pendingUpgradeCosts = longArrayOf(0L, 0L, 0L, 0L)
+        try { automationWebView()?.stopLoading() } catch (_: Exception) {}
+        scheduleNextRandomRun()
+        updateNotification("Siklus dihentikan oleh watchdog 5 menit")
+    }
+    /**
+     * Refresh Village dijalankan 30 detik setelah countdown dimulai.
+     * Refresh adalah pekerjaan persiapan untuk cycle berikutnya dan maksimal 3 menit.
+     */
+    private val delayedVillageRefreshRunnable: Runnable = object : Runnable {
+        override fun run() {
+            if (!running) return
+            if (villageRefreshInProgress || villageRefreshCompleted) return
+            if (pendingStartAll || builderInProgress || loginInProgress || reloginRequested) {
+                logEvent("AUTO REFRESH VILLAGE: WebView sedang dipakai; refresh ditunda 10 detik")
+                handler.postDelayed(this, 10_000L)
+                return
+            }
+            startAutomaticVillageRefresh()
+        }
+    }
+
+    private fun scheduleVillageRefreshForNextRun(countdownStartedAt: Long) {
+        handler.removeCallbacks(delayedVillageRefreshRunnable)
+        if (!running) return
+        val refreshAt = countdownStartedAt + 30_000L
+        val delay = (refreshAt - System.currentTimeMillis()).coerceAtLeast(0L)
+        scheduledRefreshForNextRun = true
+        countdownCyclePending = true
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putLong("countdown_started_at", countdownStartedAt)
+            .apply()
+        logEvent("AUTO REFRESH VILLAGE: dijadwalkan 30 detik SETELAH Countdown dimulai — ${timeFormat.format(Date(refreshAt))}")
+        handler.postDelayed(delayedVillageRefreshRunnable, delay)
+    }
+
+    private fun closeAutomaticVillageRefresh(reason: String) {
+        if (!villageRefreshInProgress && villageRefreshClosed) return
+        handler.removeCallbacks(villageRefreshTimeoutRunnable)
+        villageRefreshTimeoutRunnable = null
+        villageRefreshInProgress = false
+        villageRefreshCompleted = true
+        villageRefreshClosed = true
+        villageRefreshInspectInFlight = false
+        try { automationWebView()?.stopLoading() } catch (_: Exception) {}
+        logEvent("AUTO REFRESH VILLAGE: ditutup — $reason")
+        updateNotification("Refresh Village selesai")
+
+        if (running && initialCyclePending) {
+            initialCyclePending = false
+            countdownCyclePending = false
+            handler.post { triggerScheduledCycle() }
+        } else if (running && nextAt > 0L && System.currentTimeMillis() >= nextAt) {
+            handler.post { triggerScheduledCycle() }
+        }
+    }
 
     private val timeFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
     private val logTimeFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
