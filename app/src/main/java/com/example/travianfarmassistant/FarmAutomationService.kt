@@ -272,7 +272,7 @@ class FarmAutomationService : Service() {
 
     private fun closeAutomaticVillageRefresh(reason: String) {
         if (!villageRefreshInProgress && villageRefreshClosed) return
-        villageRefreshTimeoutRunnable?.let { handler.removeCallbacks(it) }
+        handler.removeCallbacks(villageRefreshTimeoutRunnable)
         villageRefreshTimeoutRunnable = null
         villageRefreshInProgress = false
         villageRefreshCompleted = true
@@ -1162,7 +1162,7 @@ class FarmAutomationService : Service() {
         villageRefreshCompleted = false
         villageRefreshClosed = false
         villageRefreshStartedAt = System.currentTimeMillis()
-        villageRefreshTimeoutRunnable?.let { handler.removeCallbacks(it) }
+        handler.removeCallbacks(villageRefreshTimeoutRunnable)
         villageRefreshTimeoutRunnable = Runnable {
             if (running && villageRefreshInProgress) {
                 closeAutomaticVillageRefresh("TIMEOUT 3 MENIT — refresh ditutup paksa")
@@ -1603,51 +1603,76 @@ class FarmAutomationService : Service() {
     private fun clickRedResourceForTransfer() {
         debugTrace("ENTER clickRedResourceForTransfer")
         if (!running || !builderInProgress || pendingUpgradeUrl.isBlank()) return
-        val needed = pendingUpgradeCosts.joinToString(",")
         val js = """
             (() => {
-                const needed = [$needed];
                 const visible = el => {
                     if (!el) return false;
                     const s = getComputedStyle(el), r = el.getBoundingClientRect();
                     return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
                 };
-                const all = [...document.querySelectorAll('[onclick*="openResourceTransfer"],[data-react-click*="openResourceTransfer"],a,button,[role="button"]')]
+                const norm = s => String(s || '').replace(/\\s+/g,' ').trim();
+
+                // Travian's actual DOM is:
+                // <div class="inlineIcon resource transfer" onclick="window.Travian.React.Hero.openResourceTransfer({...})">
+                // Prefer the exact inline onclick instead of relying only on HTMLElement.click().
+                const candidates = [...document.querySelectorAll('div.inlineIcon.resource.transfer[onclick*="openResourceTransfer"], [onclick*="window.Travian.React.Hero.openResourceTransfer"]')]
                     .filter(visible);
-                const deficitIndex = needed.findIndex(v => Number(v) > 0);
-                const score = el => {
-                    const raw = ((el.getAttribute('onclick') || '') + ' ' + (el.getAttribute('data-react-click') || '') + ' ' + (el.className || '') + ' ' + (el.getAttribute('data-resource') || '')).toLowerCase();
-                    let n = 0;
-                    if (raw.includes('openresourcetransfer')) n += 100;
-                    if (/red|negative|insufficient|missing|shortage/.test(raw)) n += 50;
-                    if (deficitIndex >= 0 && raw.includes('r' + (deficitIndex + 1))) n += 20;
-                    return n;
-                };
-                const direct = all.filter(el => /openResourceTransfer/i.test((el.getAttribute('onclick') || '') + ' ' + (el.getAttribute('data-react-click') || '')))
-                    .sort((a,b) => score(b)-score(a));
-                const red = all.filter(el => /red|negative|insufficient|missing|shortage/.test(((el.className || '') + ' ' + (el.getAttribute('data-resource') || '') + ' ' + (el.getAttribute('aria-label') || '')).toLowerCase()))
-                    .sort((a,b) => score(b)-score(a));
-                const target = direct[0] || red[0];
-                if (!target) return 'not-found';
-                target.scrollIntoView({block:'center'});
-                target.click();
-                return 'clicked';
+
+                if (!candidates.length) return 'not-found';
+
+                // A resource that cannot currently be supplied is represented by the
+                // transfer element without the fillUp class. Prefer that exact element.
+                const target = candidates.find(el => !el.classList.contains('fillUp')) || candidates[0];
+                const onclick = target.getAttribute('onclick') || '';
+                if (!onclick) return 'no-onclick';
+
+                target.scrollIntoView({block:'center', inline:'center'});
+
+                try {
+                    // Execute the exact inline handler from the DOM. This invokes:
+                    // window.Travian.React.Hero.openResourceTransfer({...})
+                    const fn = new Function(onclick);
+                    fn.call(target);
+                    return 'opened';
+                } catch (e) {
+                    try {
+                        target.click();
+                        return 'clicked';
+                    } catch (e2) {
+                        return 'click-error';
+                    }
+                }
             })();
         """.trimIndent()
         automationWebView()?.evaluateJavascript(js) { raw ->
             val result = raw.orEmpty().trim('"').replace("\\\"", "\"")
-            if (result == "clicked") {
-                logEvent("Resource Builder: elemen RED/openResourceTransfer diklik; menunggu dialog Transfer selected")
-                inventoryUseAttempt = 0
-                handler.postDelayed({ clickTransferSelected() }, 500L)
-            } else if (inventoryUseAttempt < 6) {
-                inventoryUseAttempt++
-                handler.postDelayed({ clickRedResourceForTransfer() }, 700L)
-            } else {
-                logEvent("Resource Builder: tombol resource RED/openResourceTransfer tidak ditemukan")
-                pendingUpgradeUrl = ""
-                pendingUpgradeCosts = longArrayOf(0L,0L,0L,0L)
-                goToNextBuilderVillage()
+            when (result) {
+                "opened", "clicked" -> {
+                    logEvent("Resource Builder: openResourceTransfer berhasil dipanggil dari DOM; menunggu dialog Hero")
+                    inventoryUseAttempt = 0
+                    handler.postDelayed({ clickTransferSelected() }, 1200L)
+                }
+                "no-onclick" -> {
+                    logEvent("Resource Builder: elemen transfer ditemukan tetapi atribut onclick kosong")
+                    if (inventoryUseAttempt < 8) {
+                        inventoryUseAttempt++
+                        handler.postDelayed({ clickRedResourceForTransfer() }, 700L)
+                    } else {
+                        goToNextBuilderVillage()
+                    }
+                }
+                else -> {
+                    logEvent("Resource Builder: DOM openResourceTransfer belum ditemukan (hasil=$result)")
+                    if (inventoryUseAttempt < 8) {
+                        inventoryUseAttempt++
+                        handler.postDelayed({ clickRedResourceForTransfer() }, 700L)
+                    } else {
+                        logEvent("Resource Builder: tombol resource openResourceTransfer tidak ditemukan")
+                        pendingUpgradeUrl = ""
+                        pendingUpgradeCosts = longArrayOf(0L,0L,0L,0L)
+                        goToNextBuilderVillage()
+                    }
+                }
             }
         }
     }
