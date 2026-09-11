@@ -272,7 +272,7 @@ class FarmAutomationService : Service() {
 
     private fun closeAutomaticVillageRefresh(reason: String) {
         if (!villageRefreshInProgress && villageRefreshClosed) return
-        handler.removeCallbacks(villageRefreshTimeoutRunnable)
+        villageRefreshTimeoutRunnable?.let { handler.removeCallbacks(it) }
         villageRefreshTimeoutRunnable = null
         villageRefreshInProgress = false
         villageRefreshCompleted = true
@@ -1162,7 +1162,7 @@ class FarmAutomationService : Service() {
         villageRefreshCompleted = false
         villageRefreshClosed = false
         villageRefreshStartedAt = System.currentTimeMillis()
-        handler.removeCallbacks(villageRefreshTimeoutRunnable)
+        villageRefreshTimeoutRunnable?.let { handler.removeCallbacks(it) }
         villageRefreshTimeoutRunnable = Runnable {
             if (running && villageRefreshInProgress) {
                 closeAutomaticVillageRefresh("TIMEOUT 3 MENIT — refresh ditutup paksa")
